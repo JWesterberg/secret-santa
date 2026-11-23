@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import smtplib
+import socket
 import ssl
 import threading
 import time
@@ -118,17 +119,68 @@ def build_message(cfg, giver, receiver):
     return msg
 
 
-def smtp_connect(smtp):
-    host, port = smtp["host"], int(smtp["port"])
+def _open(host, port, smtp):
+    """Connect, encrypt and log in. On failure raise (step, exception)."""
     ctx = ssl.create_default_context()
-    if port == 465:
-        s = smtplib.SMTP_SSL(host, port, context=ctx, timeout=30)
-    else:
-        s = smtplib.SMTP(host, port, timeout=30)
-        s.starttls(context=ctx)
-    if smtp["user"]:
-        s.login(smtp["user"], smtp["password"])
-    return s
+    step = f"connecting to {host} on port {port}"
+    try:
+        if port == 465:
+            conn = smtplib.SMTP_SSL(host, port, context=ctx, timeout=30)
+        else:
+            conn = smtplib.SMTP(host, port, timeout=30)
+            step = "starting encryption"
+            conn.starttls(context=ctx)
+        step = "logging in"
+        if smtp["user"]:
+            conn.login(smtp["user"], smtp["password"])
+        return conn
+    except Exception as e:
+        raise _StepError(step, e)
+
+
+class _StepError(Exception):
+    def __init__(self, step, exc):
+        super().__init__(step)
+        self.step, self.exc = step, exc
+
+
+def _explain(err, host):
+    e, step = err.exc, err.step
+    if isinstance(e, smtplib.SMTPAuthenticationError):
+        return ("The email server rejected the username or password. Use the full address as the "
+                "username, and for Gmail use the 16-character app password, not the account's "
+                "normal password.")
+    if isinstance(e, ssl.SSLCertVerificationError):
+        return ("Couldn't verify the email server's security certificate. If you installed Python "
+                "from python.org on a Mac, open Applications > Python 3.x and double-click "
+                "'Install Certificates.command', then try again.")
+    if isinstance(e, (socket.timeout, TimeoutError)):
+        return (f"Timed out while {step}. Your network, a VPN or antivirus may be blocking "
+                f"email to {host}. Try another network, such as a phone hotspot.")
+    if isinstance(e, socket.gaierror):
+        return f"Couldn't find the server '{host}'. Check the SMTP server box."
+    return f"The connection failed while {step} ({type(e).__name__}: {e})."
+
+
+def smtp_connect(smtp):
+    """Return a logged-in connection. If port 587 drops, retry on 465 and
+    remember it for the rest of the session's sends."""
+    host, port = smtp["host"], int(smtp["port"])
+    try:
+        return _open(host, port, smtp)
+    except _StepError as first:
+        auth_failed = isinstance(first.exc, smtplib.SMTPAuthenticationError)
+        if port == 587 and not auth_failed:
+            try:
+                conn = _open(host, 465, smtp)
+                smtp["port"] = "465"
+                return conn
+            except _StepError as second:
+                if isinstance(second.exc, smtplib.SMTPAuthenticationError):
+                    raise UserError(_explain(second, host))
+                a, b = _explain(first, host), _explain(second, host)
+                raise UserError(a if a == b else f"{a} Port 465 also failed: {b}")
+        raise UserError(_explain(first, host))
 
 
 def send_all(smtp, messages):
@@ -237,6 +289,8 @@ def handle_send(data):
     # Verify login before drawing so a bad password doesn't burn a draw.
     try:
         smtp_connect(smtp).quit()
+    except UserError:
+        raise
     except Exception as e:
         raise UserError(f"Couldn't log in to the email server: {e}")
 
@@ -274,13 +328,18 @@ def handle_test(data):
     receiver = {"name": "(their match will appear here)"}
     msg = build_message(cfg, giver, receiver)
     msg.replace_header("Subject", "[TEST] " + msg["Subject"])
+    conn = smtp_connect(smtp)  # raises a UserError that explains what went wrong
     try:
-        conn = smtp_connect(smtp)
         conn.send_message(msg)
-        conn.quit()
     except Exception as e:
-        raise UserError(f"Test email failed: {e}")
-    return {"sent": [to], "failed": []}
+        raise UserError(f"Logged in fine, but sending the test failed ({type(e).__name__}: {e}).")
+    finally:
+        try:
+            conn.quit()
+        except Exception:
+            pass
+    note = " (port 587 was blocked, so it used 465)" if smtp["port"] == "465" and str(data.get("smtp_port")).strip() != "465" else ""
+    return {"sent": [to], "failed": [], "note": note}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -667,7 +726,7 @@ async function post(url, body) {
 }
 $("add").onclick = () => { addRow(); save(); };
 document.addEventListener("input", save);
-$("test").onclick = async () => { const r = await post("/api/test", payload()); if (r) status("ok", "Test sent!", "Check " + r.sent[0] + " (and the spam folder)."); };
+$("test").onclick = async () => { const r = await post("/api/test", payload()); if (r) { status("ok", "Test sent!", "Check " + r.sent[0] + " (and the spam folder)." + (r.note ? "\nTip: set Port to 465" + r.note + "." : "")); } };
 $("send").onclick = async () => {
   const n = people().filter(p => p.name || p.email).length;
   if (!confirm(`Draw names and email ${n} people now? This can't be undone without re-sending everyone a new match.`)) return;
