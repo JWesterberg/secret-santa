@@ -40,7 +40,7 @@ def draw(people):
     """Return a list where result[i] is the index person i gives to.
 
     Uniform random derangement (nobody draws themselves) that also respects
-    exclusions: people sharing a non-empty "group" never draw each other.
+    exclusions: partners never draw each other.
     """
     n = len(people)
     rng = secrets.SystemRandom()
@@ -52,15 +52,14 @@ def draw(people):
             if giver == receiver:
                 ok = False
                 break
-            g1, g2 = people[giver]["group"], people[receiver]["group"]
-            if g1 and g1 == g2:
+            if receiver in people[giver]["avoid"]:
                 ok = False
                 break
         if ok:
             return order
     raise UserError(
-        "Couldn't find a valid draw with those exclusion groups. "
-        "A group can't contain more than half the participants."
+        "Couldn't find a valid draw with those partners. "
+        "Add a few more people or remove a partner pairing."
     )
 
 
@@ -192,7 +191,7 @@ def parse_people(data):
     for row in data.get("people") or []:
         name = str(row.get("name") or "").strip()
         email = str(row.get("email") or "").strip()
-        group = str(row.get("group") or "").strip().lower()
+        partner = str(row.get("partner") or "").strip().lower()
         if not name and not email:
             continue
         if not name or not EMAIL_RE.match(email):
@@ -200,9 +199,15 @@ def parse_people(data):
         if email.lower() in seen:
             raise UserError(f"{email} is listed twice.")
         seen.add(email.lower())
-        people.append({"name": name, "email": email, "group": group})
+        people.append({"name": name, "email": email, "partner": partner, "avoid": set()})
     if len(people) < 3:
         raise UserError("You need at least 3 people.")
+    index = {p["email"].lower(): i for i, p in enumerate(people)}
+    for i, p in enumerate(people):
+        j = index.get(p["partner"])
+        if j is not None and j != i:  # partners can't draw each other, either direction
+            p["avoid"].add(j)
+            people[j]["avoid"].add(i)
     return people
 
 
@@ -340,10 +345,11 @@ h2{font-size:22px;font-weight:600;margin:0}
 h2 small{display:block;font-family:Nunito,sans-serif;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.3px;text-transform:uppercase}
 
 label{display:block;font-size:13px;font-weight:700;color:var(--muted);margin:12px 0 5px}
-input,textarea{width:100%;padding:10px 14px;border:2px solid var(--line);border-radius:14px;font:inherit;color:var(--ink);background:#fbfdff;transition:border-color .15s}
-input:focus,textarea:focus{outline:none;border-color:var(--green);background:#fff}
+input,textarea,select{width:100%;padding:10px 14px;border:2px solid var(--line);border-radius:14px;font:inherit;color:var(--ink);background:#fbfdff;transition:border-color .15s}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--green);background:#fff}
 textarea{min-height:160px;resize:vertical}
-.row{display:grid;grid-template-columns:1fr 1.4fr .8fr 40px;gap:10px;margin-bottom:10px}
+select{appearance:none;cursor:pointer;padding-right:34px;background:#fbfdff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235f6f82' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center}
+.row{display:grid;grid-template-columns:1fr 1.3fr 1fr 40px;gap:10px;margin-bottom:10px}
 .row.head{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 
@@ -466,10 +472,10 @@ footer svg{display:block;margin:0 auto 6px}
     <div class="badge b-red"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="9" cy="8" r="4"/><path d="M1 21c0-4.4 3.6-7 8-7s8 2.6 8 7z"/><circle cx="17.5" cy="9" r="3" opacity=".75"/><path d="M15 14.4c4.3-.6 8 1.6 8 5.6h-4.5c0-2.3-1.2-4.2-3.5-5.6z" opacity=".75"/></svg></div>
     <h2><small>Step 1</small>Who's on the nice list?</h2>
   </div>
-  <div class="row head"><span>Name</span><span>Email</span><span>Exclusion group</span><span></span></div>
+  <div class="row head"><span>Name</span><span>Email</span><span>Partner</span><span></span></div>
   <div id="people"></div>
   <div class="actions" style="margin-top:6px"><button type="button" class="green" id="add">+ Add person</button>
-  <span class="hint">Same exclusion group (e.g. <code>smiths</code>) means they can't draw each other.</span></div>
+  <span class="hint">Pick someone's significant other under Partner and the two won't draw each other.</span></div>
 </section>
 
 <section>
@@ -539,19 +545,53 @@ const SAVE_KEYS = ["subject","event","directions","smtp_host","smtp_port","smtp_
   }
 })();
 
+let loading = false;
+const rows = () => [...document.querySelectorAll("#people .row")];
+const rowById = id => rows().find(r => r.dataset.id === id);
 function addRow(p = {}) {
   const r = document.createElement("div");
   r.className = "row";
-  r.innerHTML = '<input class="name" placeholder="Name"><input class="email" type="email" placeholder="email@example.com"><input class="grp" placeholder="optional"><button type="button" class="x" title="Remove">&times;</button>';
+  r.dataset.id = p.id || Math.random().toString(36).slice(2, 10);
+  r.dataset.partner = p.partner || "";
+  r.innerHTML = '<input class="name" placeholder="Name"><input class="email" type="email" placeholder="email@example.com"><select class="partner" aria-label="Partner"></select><button type="button" class="x" title="Remove">&times;</button>';
   r.querySelector(".name").value = p.name || "";
   r.querySelector(".email").value = p.email || "";
-  r.querySelector(".grp").value = p.group || "";
-  r.querySelector(".x").onclick = () => { r.remove(); save(); };
+  r.querySelector(".name").addEventListener("input", refreshPartners);
+  r.querySelector(".partner").onchange = e => { setPartner(r, e.target.value); save(); };
+  r.querySelector(".x").onclick = () => { setPartner(r, ""); r.remove(); refreshPartners(); save(); };
   $("people").appendChild(r);
+  refreshPartners();
+}
+// Partners are mutual: linking A to B unlinks whoever either of them was paired with before.
+function setPartner(r, id) {
+  const unlink = x => { const old = x && rowById(x.dataset.partner); if (old) old.dataset.partner = ""; if (x) x.dataset.partner = ""; };
+  unlink(r);
+  const other = id && rowById(id);
+  if (other) { unlink(other); r.dataset.partner = other.dataset.id; other.dataset.partner = r.dataset.id; }
+  refreshPartners();
+}
+function refreshPartners() {
+  if (loading) return;
+  const all = rows();
+  all.forEach(r => {
+    const sel = r.querySelector(".partner");
+    if (r.dataset.partner && !rowById(r.dataset.partner)) r.dataset.partner = "";
+    sel.innerHTML = "";
+    sel.add(new Option("No partner", ""));
+    all.forEach(o => {
+      if (o === r) return;
+      const label = o.querySelector(".name").value.trim();
+      if (label || o.dataset.id === r.dataset.partner) sel.add(new Option(label || "(unnamed)", o.dataset.id));
+    });
+    sel.value = r.dataset.partner;
+  });
 }
 function people() {
-  return [...document.querySelectorAll("#people .row")].map(r => ({
-    name: r.querySelector(".name").value, email: r.querySelector(".email").value, group: r.querySelector(".grp").value }));
+  return rows().map(r => {
+    const partner = rowById(r.dataset.partner);
+    return { id: r.dataset.id, partnerId: r.dataset.partner, name: r.querySelector(".name").value, email: r.querySelector(".email").value,
+             partner: partner ? partner.querySelector(".email").value : "" };
+  });
 }
 function payload() {
   const d = { people: people(), smtp_password: $("smtp_password").value };
@@ -564,7 +604,7 @@ function save() {  // never saves the password
 function load() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem("santa")); } catch (e) {}
-  if (d) { SAVE_KEYS.forEach(k => { if (d[k] != null) $(k).value = d[k]; }); (d.people || []).forEach(addRow); }
+  if (d) { SAVE_KEYS.forEach(k => { if (d[k] != null) $(k).value = d[k]; }); loading = true; (d.people || []).forEach(p => addRow({ ...p, partner: p.partnerId })); loading = false; refreshPartners(); }
   if (!document.querySelector("#people .row")) for (let i = 0; i < 3; i++) addRow();
 }
 function status(kind, title, text) {
