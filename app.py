@@ -611,5 +611,14 @@ load();
 
 
 if __name__ == "__main__":
-    print(f"Secret Santa running at http://{HOST}:{PORT}  (Ctrl+C to stop)")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    import webbrowser
+    url = f"http://localhost:{PORT}"
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"\n  Secret Santa is running at {url}")
+    print("  Keep this window open while you use it. Close it when you're done.\n")
+    if not os.environ.get("NO_BROWSER"):
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
