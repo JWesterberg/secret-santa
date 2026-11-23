@@ -170,19 +170,38 @@ def parse_config(data):
         "password": str(data.get("smtp_password") or ""),
     }
     if not smtp["host"]:
-        raise UserError("SMTP server is required.")
+        raise UserError("The SMTP server box is empty. For Gmail, use smtp.gmail.com.")
     if not smtp["port"].isdigit():
-        raise UserError("SMTP port must be a number.")
+        raise UserError("The Port box needs a number. For Gmail, use 587.")
 
+    is_gmail = smtp["host"].lower() in ("smtp.gmail.com", "smtp.googlemail.com")
+    if is_gmail:
+        if smtp["user"] and "@" not in smtp["user"]:
+            smtp["user"] += "@gmail.com"  # people often type just the part before @
+        smtp["password"] = re.sub(r"\s+", "", smtp["password"])  # app passwords are shown with spaces
+    if not smtp["user"]:
+        raise UserError("The Username box is empty. Enter the full sending address, like santa@gmail.com.")
+    if not smtp["password"]:
+        raise UserError("The Password box is empty. For Gmail, paste the 16-character app password.")
+
+    from_box = s("from_addr")
+    if from_box and not EMAIL_RE.match(from_box):
+        raise UserError(
+            f"The 'From address' box has \"{from_box}\", which isn't an email address. "
+            "Leave it blank to use the username, and put a display name in 'From name' instead."
+        )
     cfg = {
-        "from_addr": s("from_addr") or smtp["user"],
+        "from_addr": from_box or smtp["user"],
         "from_name": s("from_name") or "Secret Santa",
         "subject": s("subject") or "Your Secret Santa assignment",
         "directions": str(data.get("directions") or "").strip(),
         "event": s("event"),
     }
     if not EMAIL_RE.match(cfg["from_addr"]):
-        raise UserError("A valid 'From' email address is required.")
+        raise UserError(
+            f"The Username \"{smtp['user']}\" isn't a full email address. "
+            "Enter the whole address, like santa@gmail.com."
+        )
     return smtp, cfg
 
 
