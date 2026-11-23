@@ -119,20 +119,37 @@ def build_message(cfg, giver, receiver):
     return msg
 
 
-def _open(host, port, smtp):
-    """Connect, encrypt and log in. On failure raise (step, exception)."""
+def _connect(host, port):
+    """Open an encrypted connection and say hello. Returns (conn, step)."""
     ctx = ssl.create_default_context()
+    # A fixed hello name avoids slow or odd hostname lookups on some Macs.
+    if port == 465:
+        conn = smtplib.SMTP_SSL(host, port, local_hostname="localhost", context=ctx, timeout=30)
+        conn.ehlo()
+    else:
+        conn = smtplib.SMTP(host, port, local_hostname="localhost", timeout=30)
+        conn.ehlo()
+        conn.starttls(context=ctx)
+        conn.ehlo()
+    return conn
+
+
+def _open(host, port, smtp):
+    """Connect, encrypt and log in. On failure raise _StepError(step, exception)."""
     step = f"connecting to {host} on port {port}"
     try:
-        if port == 465:
-            conn = smtplib.SMTP_SSL(host, port, context=ctx, timeout=30)
-        else:
-            conn = smtplib.SMTP(host, port, timeout=30)
-            step = "starting encryption"
-            conn.starttls(context=ctx)
+        conn = _connect(host, port)
+        if not smtp["user"]:
+            return conn
         step = "logging in"
-        if smtp["user"]:
+        try:
             conn.login(smtp["user"], smtp["password"])
+        except smtplib.SMTPServerDisconnected:
+            # Some servers hang up on AUTH PLAIN; retry once with AUTH LOGIN.
+            step = "logging in (second method)"
+            conn = _connect(host, port)
+            conn.user, conn.password = smtp["user"], smtp["password"]
+            conn.auth("LOGIN", conn.auth_login, initial_response_ok=False)
         return conn
     except Exception as e:
         raise _StepError(step, e)
@@ -150,6 +167,10 @@ def _explain(err, host):
         return ("The email server rejected the username or password. Use the full address as the "
                 "username, and for Gmail use the 16-character app password, not the account's "
                 "normal password.")
+    if isinstance(e, smtplib.SMTPServerDisconnected) and step.startswith("logging in"):
+        return ("The server hung up during login. With Gmail this usually means the app password "
+                "is wrong or Google blocked the sign-in. Create a new app password and paste it in, "
+                "and check the sending account's inbox for a Google security alert.")
     if isinstance(e, ssl.SSLCertVerificationError):
         return ("Couldn't verify the email server's security certificate. If you installed Python "
                 "from python.org on a Mac, open Applications > Python 3.x and double-click "
