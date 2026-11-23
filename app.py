@@ -350,6 +350,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--green);b
 textarea{min-height:160px;resize:vertical}
 select{appearance:none;cursor:pointer;padding-right:34px;background:#fbfdff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235f6f82' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center}
 .row{display:grid;grid-template-columns:1fr 1.3fr 1fr 40px;gap:10px;margin-bottom:10px}
+.fld{display:block;min-width:0;margin:0;font-size:16px;font-weight:400;color:var(--ink)}.fld>span{display:none}
 .row.head{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
 
@@ -383,8 +384,14 @@ footer svg{display:block;margin:0 auto 6px}
   header{height:300px}.title{padding-top:40px}
   section{padding:18px 16px 20px;border-radius:20px}
   .grid2{grid-template-columns:1fr}
-  .row{grid-template-columns:1fr 40px}.row .name,.row .email{grid-column:1/3}.row.head{display:none}
-  .row{padding-bottom:10px;border-bottom:2px dashed var(--line)}
+  .row{grid-template-columns:1fr 40px;gap:4px 10px;padding-bottom:14px;margin-bottom:14px;border-bottom:2px dashed var(--line)}
+  .row.head{display:none}
+  .row .f-name,.row .f-email{grid-column:1/3}
+  #people{counter-reset:person}
+  .row{counter-increment:person}
+  .row::before{content:"Person " counter(person);grid-column:1/3;font-family:Fredoka,Nunito,sans-serif;font-weight:600;font-size:17px;color:var(--night)}
+  .fld>span{display:block;font-size:13px;font-weight:700;color:var(--muted);margin:4px 0 5px}
+  .row .x{align-self:end}
 }
 </style></head><body>
 
@@ -553,7 +560,10 @@ function addRow(p = {}) {
   r.className = "row";
   r.dataset.id = p.id || Math.random().toString(36).slice(2, 10);
   r.dataset.partner = p.partner || "";
-  r.innerHTML = '<input class="name" placeholder="Name"><input class="email" type="email" placeholder="email@example.com"><select class="partner" aria-label="Partner"></select><button type="button" class="x" title="Remove">&times;</button>';
+  r.innerHTML = '<label class="fld f-name"><span>Name</span><input class="name" placeholder="Their name"></label>' +
+    '<label class="fld f-email"><span>Email</span><input class="email" type="email" placeholder="name@example.com"></label>' +
+    '<label class="fld f-partner"><span>Partner (won\'t draw each other)</span><select class="partner"></select></label>' +
+    '<button type="button" class="x" title="Remove person" aria-label="Remove person">&times;</button>';
   r.querySelector(".name").value = p.name || "";
   r.querySelector(".email").value = p.email || "";
   r.querySelector(".name").addEventListener("input", refreshPartners);
